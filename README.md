@@ -29,16 +29,13 @@ Este proyecto busca sentar las bases para **modelos de predicción y recomendaci
 
 ```bash
 ├── data/
-│   ├── crop_recommendation_unida.csv    # Dataset principal
-│   └── processed/                       # Datos procesados
+│   ├── crop_recommendation_unida.csv    # Dataset procesado
 │
 ├── notebooks/
 │   ├── fase1_exploracion.ipynb          # Exploración en Pandas + SQL
-│   └── dashboards.ipynb                 # Ejemplos de visualización
 │
 ├── sql/
 │   ├── conformacion_base_de_datos.sql   # Esquema principal de SQL
-│   └── consultas.sql                    # Consultas de análisis
 │
 ├── dashboards/
 │   └── images/                          # Gráficas generadas
