@@ -37,7 +37,7 @@ Este proyecto busca sentar las bases para **modelos de predicción y recomendaci
 │   └── dashboards.ipynb                 # Ejemplos de visualización
 │
 ├── sql/
-│   ├── esquema.sql                      # Esquema relacional (SQLite)
+│   ├── conformacion_base_de_datos.sql   # Esquema principal de SQL
 │   └── consultas.sql                    # Consultas de análisis
 │
 ├── dashboards/
