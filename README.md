@@ -31,9 +31,6 @@ Este proyecto busca sentar las bases para **modelos de predicción y recomendaci
 ├── data/
 │   ├── crop_recommendation_unida.csv    # Dataset procesado
 │
-├── notebooks/
-│   ├── fase1_exploracion.ipynb          # Exploración en Pandas + SQL
-│
 ├── sql/
 │   ├── conformacion_base_de_datos.sql   # Esquema principal de SQL
 │
@@ -41,3 +38,5 @@ Este proyecto busca sentar las bases para **modelos de predicción y recomendaci
 │   └── images/                          # Gráficas generadas
 │
 ├── README.md                            # Documentación principal
+│
+├── LICENSE                              # Licencia del proyecto (GPLv3)
