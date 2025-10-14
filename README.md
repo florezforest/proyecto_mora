@@ -25,6 +25,14 @@ Este proyecto busca sentar las bases para **modelos de predicción y recomendaci
 
 ---
 
+## 💻 Proyecto asociado
+
+Aplicación (GUI desarrollada con Tkinter) para realizar predicciones de cultivos, empleando una regresión logística:
+
+https://github.com/StivLon/Predicci-n-de-cultivos-proyecto-mora
+
+---
+
 ## 🗂️ Estructura del Proyecto
 
 ```bash
