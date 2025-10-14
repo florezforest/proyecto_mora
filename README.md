@@ -46,7 +46,7 @@ https://github.com/StivLon/Predicci-n-de-cultivos-proyecto-mora
 │   └── images/                          # Gráficas generadas
 ├── PCA/
 │   ├── pca_cultivos_R.ipynb             # Análisis de componentes principales
-|
+│
 ├── dashboard_streamlit.py               # Dashboard dinámico con implementación de modelo, desarrollado con streamlit
 │
 ├── README.md                            # Documentación principal
