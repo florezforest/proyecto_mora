@@ -36,6 +36,8 @@ Este proyecto busca sentar las bases para **modelos de predicción y recomendaci
 │
 ├── dashboards/
 │   └── images/                          # Gráficas generadas
+├── PCA/
+│   ├── pca_cultivos_R.ipynb             # Análisis de componentes principales
 │
 ├── README.md                            # Documentación principal
 │
