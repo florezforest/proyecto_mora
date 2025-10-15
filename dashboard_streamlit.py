@@ -1,63 +1,48 @@
-# Dashboard de Inteligencia de Negocio: Predicción de Cultivo Óptimo basado en Condiciones
+# Prediccion de Zona de Vida y Departamento Optimos basado en NPK y Temperatura Futura.
 import streamlit as st
 import pandas as pd
 import numpy as np
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.preprocessing import LabelEncoder
-from sklearn.model_selection import train_test_split 
+from sklearn.model_selection import train_test_split
 import warnings
-import altair as alt 
+import altair as alt # <-- Importamos altair para el gráfico
 warnings.filterwarnings('ignore') 
 
-# --- CONFIGURACIÓN Y CONSTANTES ---
+# --- Configuración Inicial y Cache de Datos/Modelo ---
 
 EXCEL_FILENAME = "crop_recommendation_unida_corregida.xlsx"
 
-# Límites de seguridad para los widgets de Streamlit y limpieza de datos (Solución a errores)
-MAX_WIDGET_N = 200.0
-MAX_WIDGET_P = 200.0
-MAX_WIDGET_K = 250.0
-MAX_WIDGET_TEMP = 50.0      # Límite realista para T° (soluciona error 99.499)
-MAX_WIDGET_RAIN = 300.0     # Límite del widget para Precipitación (soluciona error 999.834)
-MAX_WIDGET_PH = 14.0
-MAX_WIDGET_HUM = 100.0
-
-# --- CACHE DE DATOS Y MODELO ---
-
 @st.cache_data
-def load_and_preprocess_data_for_crop_prediction():
-    """Carga, limpia y prepara el dataset enfocándose en PREDECIR EL CULTIVO."""
+def load_and_preprocess_data():
+    """Carga, limpia y prepara TODAS las variables para el entrenamiento."""
     try:
         df = pd.read_excel(EXCEL_FILENAME)
-        
-        # 1. Normalizar nombres de columnas
         df.columns = [col.lower().replace('.', '').replace('/', '_').replace('-', '_').strip() for col in df.columns]
         
-        # 2. Definir Features
-        feature_cols = ['n', 'p', 'k', 'temperature', 'rainfall', 'humidity', 'ph']
+        # Combinar departamento y zona_vida en una sola variable objetivo para predicción
+        df['target_location'] = df['departamento_colombia'] + " | " + df['zona_vida']
         
-        # 3. Limpieza y Relleno de Datos (Conversión a numérico y llenado de nulos con la media)
-        for col in feature_cols:
+        # Limpieza de columnas clave
+        df['departamento_colombia'].fillna('desconocido', inplace=True)
+        
+        # Lista de columnas numéricas a limpiar y rellenar con la media
+        # INCLUIMOS N, P, K y las 3 variables de temperatura para el modelo.
+        numeric_cols = ['n', 'p', 'k', 'temperature', 'temperature_min', 'temperature_max',
+                        'rainfall', 'humidity', 'ph']
+        
+        for col in numeric_cols:
             if col in df.columns:
                 df[col] = pd.to_numeric(df[col], errors='coerce')
                 df[col].fillna(df[col].mean(), inplace=True)
-        
-        # 4. TRATAMIENTO DE OUTLIERS (SOLUCIÓN DEFINITIVA A STREAMLIT ERRORS)
-        # Aseguramos que los valores máximos históricos no superen los límites de los widgets.
-        if 'temperature' in df.columns:
-            df.loc[df['temperature'] > MAX_WIDGET_TEMP, 'temperature'] = MAX_WIDGET_TEMP
-        
-        if 'rainfall' in df.columns:
-            df.loc[df['rainfall'] > MAX_WIDGET_RAIN, 'rainfall'] = MAX_WIDGET_RAIN
-                
-        # 5. Definir Target y Codificación
-        df['crop'].fillna('desconocido', inplace=True)
+            
+        # Codificación (Label Encoding) de Cultivo y Ubicación (Target)
         le_crop = LabelEncoder()
         df['crop_encoded'] = le_crop.fit_transform(df['crop'])
+        le_target = LabelEncoder()
+        df['target_encoded'] = le_target.fit_transform(df['target_location'])
         
-        df.dropna(subset=feature_cols + ['crop_encoded'], inplace=True)
-
-        return df, le_crop
+        return df, le_crop, le_target
     
     except FileNotFoundError:
         st.error(f"Error: No se encontró el archivo {EXCEL_FILENAME}. Colócalo en la misma carpeta.")
@@ -67,179 +52,200 @@ def load_and_preprocess_data_for_crop_prediction():
         st.stop()
 
 @st.cache_data
-def train_crop_model(df):
-    """Entrena el modelo usando condiciones de suelo y clima para predecir el CULTIVO ÓPTIMO."""
+def train_complex_model(df):
+    """Entrena el modelo usando N, P, K, y las tres variables de temperatura para predecir la UBICACIÓN ÓPTIMA."""
     
-    X_features = ['n', 'p', 'k', 'temperature', 'rainfall', 'humidity', 'ph']
-    X = df[X_features]
-    y = df['crop_encoded']
+    # 7 Features de entrada: N, P, K, temperatura (media), t_min, t_max, y crop_encoded
+    X = df[['n', 'p', 'k', 'temperature', 'temperature_min', 'temperature_max', 'crop_encoded']]
+    y = df['target_encoded']
 
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42, stratify=y)
     
-    model = RandomForestClassifier(n_estimators=150, random_state=42, max_depth=15, class_weight='balanced')
+    model = RandomForestClassifier(n_estimators=150, random_state=42, max_depth=15)
     model.fit(X_train, y_train)
-    return model, X_features
+    return model, X
 
-# --- FUNCIÓN DE VISUALIZACIÓN ---
+# --- Función para crear el Diagrama de Pareto (NUEVO) ---
 
-def create_pareto_chart(df_results):
-    """Crea un Diagrama de Pareto con Altair."""
+def create_pareto_chart(df_results_chart):
+    """
+    Crea un Diagrama de Pareto usando Altair a partir de los resultados Top-N.
+    """
+    # 1. Calcular el Porcentaje Acumulado
+    # Aseguramos que la columna de probabilidad esté como float
+    df_results_chart['Probabilidad (%)'] = df_results_chart['Probabilidad (%)'].astype(float)
+    df_results_chart['Probabilidad_Normalizada'] = df_results_chart['Probabilidad (%)'] / 100
+    df_results_chart['Acumulado'] = df_results_chart['Probabilidad_Normalizada'].cumsum()
     
-    # Calcular el Porcentaje Acumulado
-    df_results['Probabilidad_Normalizada'] = df_results['Probabilidad (%)'] / 100
-    df_results['Acumulado'] = df_results['Probabilidad_Normalizada'].cumsum()
-    
-    # 1. Gráfico de Barras (Probabilidad Individual)
-    bar_chart = alt.Chart(df_results).mark_bar().encode(
-        x=alt.X('Cultivo:N', sort='-y', title='Cultivo Candidato'), 
+    # 2. Gráfico de Barras (Probabilidad Individual)
+    bar_chart = alt.Chart(df_results_chart).mark_bar().encode(
+        # La concatenación hace que la etiqueta sea más descriptiva en el eje X
+        x=alt.X('Ubicacion:N', sort='-y', title='Ubicación (Dpto | Zona)'), 
         y=alt.Y('Probabilidad_Normalizada', axis=alt.Axis(format='%', title='Probabilidad Individual')),
-        tooltip=['Cultivo', alt.Tooltip('Probabilidad_Normalizada', format='.1%')],
-        color=alt.value('#1f77b4') 
+        tooltip=['Ubicacion', alt.Tooltip('Probabilidad_Normalizada', format='.1%')],
+        color=alt.value('#1f77b4') # Color de las barras (azul)
     ).properties(
-        title="Diagrama de Pareto de Cultivos Óptimos por Probabilidad"
+        title="Diagrama de Pareto de Ubicaciones Alternativas (Probabilidad)"
     )
 
-    # 2. Gráfico de Línea (Probabilidad Acumulada)
-    line_chart = alt.Chart(df_results).mark_line(point=True, color='red').encode(
-        x=alt.X('Cultivo:N', sort='-y'), 
+    # 3. Gráfico de Línea (Probabilidad Acumulada)
+    line_chart = alt.Chart(df_results_chart).mark_line(point=True, color='red').encode(
+        x=alt.X('Ubicacion:N', sort='-y'), # Mismo orden de barras
         y=alt.Y('Acumulado', axis=alt.Axis(format='%', title='Probabilidad Acumulada')),
-        tooltip=['Cultivo', alt.Tooltip('Acumulado', format='.1%')]
+        tooltip=['Ubicacion', alt.Tooltip('Acumulado', format='.1%')]
     )
     
-    # 3. Combinar y mostrar
+    # 4. Combinar ambos gráficos y personalizar
     chart = alt.layer(bar_chart, line_chart).resolve_scale(
-        y='independent' 
+        y='independent' # Permite que cada eje Y tenga su propia escala
     ).configure_axis(
-        labelFontSize=10, titleFontSize=12
+        labelFontSize=12,
+        titleFontSize=14
     ).configure_title(
-        fontSize=14
+        fontSize=16
     ).interactive()
 
     st.altair_chart(chart, use_container_width=True)
 
-
-# --- FUNCIÓN PRINCIPAL DE LA APLICACIÓN ---
+# --- Función Principal de la Aplicación ---
 
 def app():
-    st.set_page_config(page_title="Dashboard de Cultivos Óptimos", layout="wide")
-    st.title("🌾 Dashboard Inteligente: Selección de Cultivo Óptimo")
-    st.markdown("Ingresa los **rangos** de tus condiciones de suelo y clima. El sistema predice los cultivos más adecuados para ese ambiente.")
+    st.set_page_config(page_title="Simulador Multi-Variable Futuro", layout="wide")
+    st.title("🌱 Simulador Multi-Variable de Futura Ubicación (NPK + Temperatura)")
+    st.markdown("Predice la **Zona de Vida** y el **Departamento** óptimos si cambian los requerimientos de nutrientes y temperatura de un cultivo.")
 
     # Cargar datos y entrenar el modelo
-    df, le_crop = load_and_preprocess_data_for_crop_prediction()
-    model, features = train_crop_model(df)
+    df, le_crop, le_target = load_and_preprocess_data()
+    model, X = train_complex_model(df)
     
-    # Obtener los rangos min/max de los datos históricos (ya limpios)
-    min_max_values = df[features].agg(['min', 'max']).T.to_dict('index')
-
-    # ----------------------------------------------------------------------
-    # 1. ENTRADA DE PARÁMETROS (Sidebar)
-    # ----------------------------------------------------------------------
-    st.sidebar.header("🎛️ Ingresa los Rangos de Condiciones")
+    # Obtener opciones para los widgets
+    crop_options = sorted(le_crop.classes_)
     
-    st.sidebar.subheader("🔬 Condiciones del Suelo")
+    st.sidebar.header("⚙️ Configuración del Escenario FUTURO")
     
-    col_n, col_p = st.sidebar.columns(2)
-    with col_n:
-        n_min = st.number_input("Nitrógeno (N) Mín.", min_value=0.0, max_value=MAX_WIDGET_N, value=min_max_values['n']['min'], step=1.0)
-        n_max = st.number_input("Nitrógeno (N) Máx.", min_value=n_min, max_value=MAX_WIDGET_N, value=min_max_values['n']['max'], step=1.0)
-    with col_p:
-        p_min = st.number_input("Fósforo (P) Mín.", min_value=0.0, max_value=MAX_WIDGET_P, value=min_max_values['p']['min'], step=1.0)
-        p_max = st.number_input("Fósforo (P) Máx.", min_value=p_min, max_value=MAX_WIDGET_P, value=min_max_values['p']['max'], step=1.0)
-    
-    col_k, col_ph = st.sidebar.columns(2)
-    with col_k:
-        k_min = st.number_input("Potasio (K) Mín.", min_value=0.0, max_value=MAX_WIDGET_K, value=min_max_values['k']['min'], step=1.0)
-        k_max = st.number_input("Potasio (K) Máx.", min_value=k_min, max_value=MAX_WIDGET_K, value=min_max_values['k']['max'], step=1.0)
-    with col_ph:
-        ph_min = st.number_input("pH Mín.", min_value=0.0, max_value=MAX_WIDGET_PH, value=min_max_values['ph']['min'], step=0.1)
-        ph_max = st.number_input("pH Máx.", min_value=ph_min, max_value=MAX_WIDGET_PH, value=min_max_values['ph']['max'], step=0.1)
-
-    st.sidebar.subheader("☁️ Condiciones Climáticas")
-
-    col_t, col_h = st.sidebar.columns(2)
-    with col_t:
-        temp_min = st.number_input("Temp. Mín. (°C)", min_value=0.0, max_value=MAX_WIDGET_TEMP, value=min_max_values['temperature']['min'], step=0.5)
-        temp_max = st.number_input("Temp. Máx. (°C)", min_value=temp_min, max_value=MAX_WIDGET_TEMP, value=min_max_values['temperature']['max'], step=0.5)
-    with col_h:
-        hum_min = st.number_input("Humedad Mín. (%)", min_value=0.0, max_value=MAX_WIDGET_HUM, value=min_max_values['humidity']['min'], step=1.0)
-        hum_max = st.number_input("Humedad Máx. (%)", min_value=hum_min, max_value=MAX_WIDGET_HUM, value=min_max_values['humidity']['max'], step=1.0)
-        
-    prec_min = st.sidebar.number_input("Precipitación Mín. (mm)", min_value=0.0, max_value=MAX_WIDGET_RAIN, value=min_max_values['rainfall']['min'], step=1.0)
-    prec_max = st.sidebar.number_input("Precipitación Máx. (mm)", min_value=prec_min, max_value=MAX_WIDGET_RAIN, value=min_max_values['rainfall']['max'], step=1.0)
-
-    # ----------------------------------------------------------------------
-    # 2. PROCESAMIENTO Y PREDICCIÓN
-    # ----------------------------------------------------------------------
-    
-    st.header("🎯 Resultados del Análisis Integrado")
-    
-    # Calculamos los promedios para alimentar al modelo
-    input_n = (n_min + n_max) / 2
-    input_p = (p_min + p_max) / 2
-    input_k = (k_min + k_max) / 2
-    input_ph = (ph_min + ph_max) / 2
-    input_temp = (temp_min + temp_max) / 2
-    input_hum = (hum_min + hum_max) / 2
-    input_prec = (prec_min + prec_max) / 2
-
-    input_conditions = pd.DataFrame([[
-        input_n, input_p, input_k, input_temp, input_prec, input_hum, input_ph
-    ]], columns=features)
-    
-    # Predicción de probabilidad
-    probas = model.predict_proba(input_conditions)[0]
-    
-    # Obtener el Top 10 de cultivos
-    N_TOP = 10
-    top_indices = np.argsort(probas)[::-1][:N_TOP]
-    top_probas = probas[top_indices]
-    top_crops_encoded = le_crop.inverse_transform(top_indices)
-    
-    # ----------------------------------------------------------------------
-    # 3. VISUALIZACIÓN Y ANÁLISIS
-    # ----------------------------------------------------------------------
-
-    # A. Métrica Principal
-    predicted_crop = top_crops_encoded[0].upper()
-    predicted_proba = top_probas[0] * 100
-    
-    st.metric(
-        label="🏆 Cultivo Principal Óptimo", 
-        value=predicted_crop, 
-        delta=f"Probabilidad de Éxito: {predicted_proba:.1f}%",
-        delta_color="normal"
+    # --- 1. Entrada del Cultivo ---
+    current_crop_name = st.sidebar.selectbox(
+        "Elige el CULTIVO:",
+        options=crop_options
     )
+    current_crop_encoded = le_crop.transform([current_crop_name])[0]
+
+    # Obtenemos las variables promedio de ese cultivo como punto de partida
+    base_data_crop = df[df['crop'] == current_crop_name]
+    
+    if base_data_crop.empty:
+        st.error(f"No hay datos suficientes para {current_crop_name}. Por favor, elige otro cultivo.")
+        st.stop()
+        
+    # Variables Base (Promedio de todos los departamentos para ese cultivo)
+    N_base = base_data_crop['n'].mean()
+    P_base = base_data_crop['p'].mean()
+    K_base = base_data_crop['k'].mean()
+    T_avg_base = base_data_crop['temperature'].mean()
+    T_min_base = base_data_crop['temperature_min'].mean()
+    T_max_base = base_data_crop['temperature_max'].mean()
+    
+    # --- 2. Sliders para N, P, K (Entrada Futura) ---
+    st.sidebar.subheader("Requerimientos de Nutrientes (N, P, K)")
+    N_future = st.sidebar.slider("Nitrógeno (N)", 
+                                 min_value=0.0, max_value=200.0, 
+                                 value=N_base, step=1.0)
+    P_future = st.sidebar.slider("Fósforo (P)", 
+                                 min_value=0.0, max_value=200.0, 
+                                 value=P_base, step=1.0)
+    K_future = st.sidebar.slider("Potasio (K)", 
+                                 min_value=0.0, max_value=250.0, 
+                                 value=K_base, step=1.0)
+
+    # --- 3. Sliders para Temperaturas (Entrada Futura) ---
+    st.sidebar.subheader("Requerimientos de Temperatura (°C)")
+    T_min_future = st.sidebar.slider("T° Mínima (Futura)", 
+                                     min_value=T_min_base - 5, max_value=T_max_base + 10, 
+                                     value=T_min_base + 2, step=0.1)
+    T_max_future = st.sidebar.slider("T° Máxima (Futura)", 
+                                     min_value=T_min_base - 5, max_value=T_max_base + 10, 
+                                     value=T_max_base + 2, step=0.1)
+    # Temperatura Media (simplemente el promedio de min/max para este modelo)
+    T_avg_future = (T_min_future + T_max_future) / 2
+    
+    
+    # --- 4. Realizar Predicción Compleja ---
+    
+    future_conditions = pd.DataFrame([[
+        N_future, P_future, K_future, T_avg_future, T_min_future, T_max_future, current_crop_encoded
+    ]], columns=X.columns)
+    
+    # Predicción de la etiqueta de ubicación
+    predicted_label_new = model.predict(future_conditions)[0]
+    predicted_target_location = le_target.inverse_transform([predicted_label_new])[0]
+    
+    # Separar Departamento y Zona de Vida
+    predicted_dept, predicted_zona = predicted_target_location.split(' | ')
+    
+    # Probabilidad de las 5 mejores predicciones
+    probas = model.predict_proba(future_conditions)[0]
+    top_5_indices = np.argsort(probas)[::-1][:5]
+    top_5_probas = probas[top_5_indices]
+    top_5_targets = le_target.inverse_transform(top_5_indices)
+    
+    
+    # --- 5. Mostrar Resultados ---
+    
+    st.header(f"➡️ Predicción de la Mejor Ubicación Futura para {current_crop_name.upper()}")
+    st.subheader(f"Basado en NPK ({N_future:.0f}, {P_future:.0f}, {K_future:.0f}) y T° ({T_min_future:.1f}°C - {T_max_future:.1f}°C)")
+
+    col1, col2 = st.columns(2)
+    
+    col1.metric("🏅 Departamento Óptimo Futuro", predicted_dept.upper(), 
+                delta=f"Probabilidad de Éxito: {top_5_probas[0]*100:.1f}%")
+    
+    col2.metric("🌳 Zona de Vida Óptima", predicted_zona.upper())
+    
     
     st.markdown("---")
 
-    # B. Gráfico de Pareto de Alternativas
-    st.subheader("📈 Cultivos Alternativos y Análisis de Pareto (Top 10)")
+    # --- 6. Mostrar Top 5 Ubicaciones Alternativas y Diagrama de Pareto ---
     
-    top_results = pd.DataFrame({
-        "Cultivo": top_crops_encoded,
-        "Probabilidad (%)": top_probas * 100
-    }).sort_values(by="Probabilidad (%)", ascending=False).reset_index(drop=True)
+    st.subheader("📊 Top 5 Ubicaciones Alternativas")
     
-    create_pareto_chart(top_results.copy())
+    top_results = []
     
-    # C. Detalle de la Tabla
-    st.markdown("##### Detalle de las Probabilidades")
-    top_results_display = top_results.drop(columns=['Probabilidad_Normalizada', 'Acumulado'], errors='ignore')
-    st.dataframe(top_results_display.style.format({'Probabilidad (%)': "{:.1f}%"}), use_container_width=True)
+    # Usamos 'enumerate' para obtener el índice (posicion) y el valor (target, proba)
+    for index, (target, proba) in enumerate(zip(top_5_targets, top_5_probas)):
+        # Separar Departamento y Zona de Vida
+        dept, zona = target.split(' | ')
+        
+        # DataFrame para la tabla
+        top_results.append({
+            "Posición": index + 1,
+            "Departamento": dept.upper(),
+            "Zona de Vida": zona.upper(),
+            "Probabilidad (%)": f"{proba*100:.1f}",
+            "Ubicacion": f"{dept.upper()} | {zona.upper()}" # Columna extra para el gráfico
+        })
+        
+    df_results = pd.DataFrame(top_results)
+    
+    # Mostramos el Diagrama de Pareto (usamos todo el Top 5)
+    st.markdown("##### Visualización de la Distribución de Probabilidad (Diagrama de Pareto)")
+    create_pareto_chart(df_results.copy()) # Usamos una copia para el gráfico
+    
+    # Mostramos la tabla (quitando el resultado principal)
+    st.markdown("##### Detalle de las Ubicaciones")
+    # Convertimos la columna de Probabilidad a float para ordenarla, pero la mostramos formateada
+    df_display = df_results.copy()
+    df_display['Probabilidad (%)'] = df_display['Probabilidad (%)'].astype(float)
+    
+    st.dataframe(df_display[['Posición', 'Departamento', 'Zona de Vida', 'Probabilidad (%)']].set_index('Posición').style.format({'Probabilidad (%)': "{:.1f}%"}))
 
-    # D. Explicación
     st.markdown(
         """
-        ---
-        **Nota:** recuerden muchachos que los rangos de datos atípicos (como T° > 50°C o Precipitación > 300mm) en el dataset original 
-        fueron limitados a valores más realistas para garantizar la estabilidad del simulador. 
-        El **Diagrama de Pareto** le permite aplicar el **Principio 80/20** para enfocarse en los cultivos 
-        con mayor probabilidad de éxito dada la combinación de condiciones ingresadas.
+        **Explicación:** El modelo busca la combinación histórica de N, P, K, T-min y T-max que mejor coincida 
+        con tus escenarios futuros simulados, prediciendo la ubicación (Departamento y Zona de Vida) donde ese 
+        conjunto de condiciones es más común.
         """
     )
 
 
 if __name__ == '__main__':
     app()
-# para poner a correr el streamlit en la terminal:  python -m streamlit run dashboard_cultivos_optimizado.py
